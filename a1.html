@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>משחק מיינקראפט משופר</title>
+    <style>
+        body { margin: 0; }
+        canvas { display: block; }
+        #info {
+            position: absolute;
+            top: 10px;
+            width: 100%;
+            text-align: center;
+            color: white;
+            font-family: Arial;
+            pointer-events: none;
+        }
+        #crosshair {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 20px;
+            height: 20px;
+            transform: translate(-50%, -50%);
+            pointer-events: none;
+            color: white;
+        }
+    </style>
+</head>
+<body>
+    <div id="info">השתמש בחצים כדי לזוז, בעכבר כדי להסתכל מסביב, וברווח כדי לקפוץ.<br>לחץ שמאלי בעכבר כדי לשבור קוביות.<br>לחץ על המסך כדי לנעול את העכבר.</div>
+    <div id="crosshair">+</div>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script>
+        const scene = new THREE.Scene();
+        
+        // הוספת טקסטורת רעש לצבע משתנה עבור כל קוביה
+        const noiseTexture = new THREE.DataTexture(
+            new Uint8Array(256).map(() => Math.random() * 255),
+            16, 16, THREE.LuminanceFormat
+        );
+        noiseTexture.needsUpdate = true;
+        noiseTexture.wrapS = THREE.RepeatWrapping;
+        noiseTexture.wrapT = THREE.RepeatWrapping;
+
+        // יצירת שמיים
+        const skyGeometry = new THREE.SphereGeometry(500, 32, 32);
+        const skyMaterial = new THREE.MeshBasicMaterial({ 
+            color: 0x87CEEB,
+            side: THREE.BackSide
+        });
+        const sky = new THREE.Mesh(skyGeometry, skyMaterial);
+        scene.add(sky);
+
+        // יצירת עננים
+        function createCloud(x, y, z) {
+            const group = new THREE.Group();
+            const geometry = new THREE.SphereGeometry(5, 16, 16);
+            const material = new THREE.MeshBasicMaterial({ color: 0xFFFFFF, transparent: true, opacity: 0.8 });
+            
+            for(let i = 0; i < 5; i++) {
+                const cloud = new THREE.Mesh(geometry, material);
+                cloud.position.set(
+                    x + Math.random() * 10 - 5,
+                    y + Math.random() * 3,
+                    z + Math.random() * 10 - 5
+                );
+                cloud.scale.set(1 + Math.random() * 0.5, 0.3, 0.7 + Math.random() * 0.3);
+                group.add(cloud);
+            }
+            return group;
+        }
+
+        // הוספת עננים
+        for(let i = 0; i < 20; i++) {
+            const cloud = createCloud(
+                Math.random() * 200 - 100,
+                50 + Math.random() * 20,
+                Math.random() * 200 - 100
+            );
+            scene.add(cloud);
+        }
+
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        const renderer = new THREE.WebGLRenderer();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setClearColor(0x87CEEB); // צבע רקע של השמיים
+        document.body.appendChild(renderer.domElement);
+
+        // תאורה
+        const light = new THREE.AmbientLight(0xffffff, 0.5);
+        scene.add(light);
+        const directionalLight = new THREE.DirectionalLight(0xffffff, 0.5);
+        directionalLight.position.set(0, 1, 0);
+        scene.add(directionalLight);
+
+        // יצירת קוביות עם טכנולוגיית צבע משתנה
+        function createCube(x, y, z, color) {
+            const isGreenCube = color === 0x558822;
+            const material = new THREE.MeshPhongMaterial({ 
+                color: color, 
+                map: noiseTexture, 
+                opacity: isGreenCube ? 0.85 : 1, 
+                transparent: isGreenCube 
+            });
+            const geometry = new THREE.BoxGeometry(1, 1, 1);
+            const cube = new THREE.Mesh(geometry, material);
+            cube.position.set(x, y, z);
+            cube.userData = { isBreakable: true };
+            return cube;
+        }
+
+        // מסגרת לקוביה נבחרת
+        const highlightedEdgesGeometry = new THREE.EdgesGeometry(new THREE.BoxGeometry(1.01, 1.01, 1.01));
+        const highlightedEdgesMaterial = new THREE.LineBasicMaterial({ color: 0x000000, linewidth: 2 });
+        const highlightedEdges = new THREE.LineSegments(highlightedEdgesGeometry, highlightedEdgesMaterial);
+        highlightedEdges.visible = false;
+        scene.add(highlightedEdges);
+
+        // מערך לשמירת כל הקוביות
+        const cubes = [];
+
+        // יצירת עולם מוגדל עם אפשרות חפירה לעומק ומבוכים תת-קרקעיים
+        function createWorld() {
+            const MIN_XZ = -50, MAX_XZ = 50, MAX_DEPTH = -20;
+
+            // יצירת רצפה
+            for (let x = MIN_XZ; x <= MAX_XZ; x++) {
+                for (let z = MIN_XZ; z <= MAX_XZ; z++) {
+                    const cube = createCube(x, -1, z, 0x558822);
+                    cube.userData.isBreakable = false;
+                    scene.add(cube);
+                    cubes.push(cube);
+                }
+            }
+
+            // קוביות אקראיות על פני השטח
+            for (let i = 0; i < 100; i++) {
+                const x = Math.floor(Math.random() * (MAX_XZ - MIN_XZ)) + MIN_XZ;
+                const z = Math.floor(Math.random() * (MAX_XZ - MIN_XZ)) + MIN_XZ;
+                const height = Math.floor(Math.random() * 3) + 1;
+                
+                for (let y = 0; y < height; y++) {
+                    const cube = createCube(x, y, z, 0x8b4513);
+                    scene.add(cube);
+                    cubes.push(cube);
+                }
+            }
+
+            // יצירת שכבות עומק עם מבוכים תת-קרקעיים וקוביות ברזל
+            for (let y = -2; y >= MAX_DEPTH; y--) {
+                for (let x = MIN_XZ; x <= MAX_XZ; x++) {
+                    for (let z = MIN_XZ; z <= MAX_XZ; z++) {
+                        if (Math.random() < 0.2) continue;  // מרווחים למבוכים
+                        const color = y < -10 && Math.random() < 0.3 ? 0xd7d7d7 : 0x8b4513; // שכבות ברזל
+                        const cube = createCube(x, y, z, color);
+                        scene.add(cube);
+                        cubes.push(cube);
+                    }
+                }
+            }
+        }
+
+        createWorld();
+
+        // עדכון תאורה לפי עומק
+        function adjustLighting(depth) {
+            light.intensity = Math.max(0.1, 1 + depth / 20);
+        }
+
+        // פיזיקה ושליטה
+        const player = {
+            velocity: new THREE.Vector3(),
+            onGround: false,
+            height: 1.8,
+            speed: 0.1,
+            jumpForce: 0.15, // הנמכת גובה הקפיצה
+            gravity: -0.015
+        };
+
+        camera.position.y = player.height;
+
+        // מצב המקשים
+        const keys = {};
+        document.addEventListener('keydown', (e) => keys[e.code] = true);
+        document.addEventListener('keyup', (e) => keys[e.code] = false);
+
+        // שליטת עכבר
+        let isLocked = false;
+        const euler = new THREE.Euler(0, 0, 0, 'YXZ');
+        const direction = new THREE.Vector3();
+
+        document.addEventListener('click', () => {
+            if (!isLocked) {
+                renderer.domElement.requestPointerLock();
+            }
+        });
+
+        document.addEventListener('pointerlockchange', () => {
+            isLocked = document.pointerLockElement === renderer.domElement;
+        });
+
+        document.addEventListener('mousemove', (e) => {
+            if (isLocked) {
+                euler.setFromQuaternion(camera.quaternion);
+                euler.y -= e.movementX * 0.002;
+                euler.x = Math.max(Math.min(
+                    euler.x - e.movementY * 0.002,
+                    Math.PI / 2
+                ), -Math.PI / 2);
+                camera.quaternion.setFromEuler(euler);
+            }
+        });
+
+        // שבירת קוביות
+        const raycaster = new THREE.Raycaster();
+        let selectedCube = null;
+        const BREAK_DISTANCE = 4;
+
+        function updateSelectedCube() {
+            const rayDirection = new THREE.Vector3(0, 0, -1);
+            rayDirection.applyQuaternion(camera.quaternion);
+            raycaster.set(camera.position, rayDirection);
+
+            const intersects = raycaster.intersectObjects(cubes);
+            
+            highlightedEdges.visible = false;
+            selectedCube = null;
+
+            if (intersects.length > 0) {
+                const distance = intersects[0].distance;
+                if (distance <= BREAK_DISTANCE) {
+                    selectedCube = intersects[0].object;
+                    if (selectedCube.userData.isBreakable) {
+                        highlightedEdges.position.copy(selectedCube.position);
+                        highlightedEdges.visible = true;
+                    }
+                }
+            }
+        }
+
+        document.addEventListener('mousedown', (e) => {
+            if (isLocked && e.button === 0 && selectedCube && selectedCube.userData.isBreakable) {
+                scene.remove(selectedCube);
+                cubes.splice(cubes.indexOf(selectedCube), 1);
+                highlightedEdges.visible = false;
+                selectedCube = null;
+            }
+        });
+
+        function checkCollision(position) {
+            for (const cube of cubes) {
+                const box = new THREE.Box3().setFromObject(cube);
+                const playerBox = new THREE.Box3();
+                const playerSize = new THREE.Vector3(0.5, player.height, 0.5);
+                playerBox.setFromCenterAndSize(position, playerSize);
+
+                if (box.intersectsBox(playerBox)) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        // לולאת המשחק
+        function animate() {
+            requestAnimationFrame(animate);
+
+            // עדכון קוביה נבחרת
+            updateSelectedCube();
+
+            // תנועה
+            const moveDirection = new THREE.Vector3();
+            
+            if (keys['ArrowUp']) moveDirection.z = -1;
+            if (keys['ArrowDown']) moveDirection.z = 1;
+            if (keys['ArrowLeft']) moveDirection.x = -1;
+            if (keys['ArrowRight']) moveDirection.x = 1;
+
+            moveDirection.normalize();
+            moveDirection.applyAxisAngle(new THREE.Vector3(0, 1, 0), euler.y);
+
+            const potentialPosition = camera.position.clone();
+            potentialPosition.x += moveDirection.x * player.speed;
+            potentialPosition.z += moveDirection.z * player.speed;
+
+            if (!checkCollision(potentialPosition)) {
+                camera.position.copy(potentialPosition);
+            }
+
+            if (keys['Space'] && player.onGround) {
+                player.velocity.y = player.jumpForce;
+                player.onGround = false;
+            }
+
+            player.velocity.y += player.gravity;
+            const verticalPosition = camera.position.clone();
+            verticalPosition.y += player.velocity.y;
+
+            if (!checkCollision(verticalPosition)) {
+                camera.position.copy(verticalPosition);
+            } else {
+                if (player.velocity.y < 0) {
+                    player.onGround = true;
+                }
+                player.velocity.y = 0;
+            }
+
+            if (camera.position.y < player.height) {
+                camera.position.y = player.height;
+                player.onGround = true;
+                player.velocity.y = 0;
+            }
+
+            adjustLighting(camera.position.y);
+            renderer.render(scene, camera);
+        }
+
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        animate();
+    </script>
+</body>
+</html>
